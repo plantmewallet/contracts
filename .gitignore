@@ -1,0 +1,8 @@
+# exclude everything
+*
+# except the following file
+!.gitignore
+!README.md
+!*.sol
+!*.so
+!*.move
