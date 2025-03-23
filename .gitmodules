@@ -1,0 +1,3 @@
+[submodule "erc/private-contracts"]
+	path = erc/private-contracts
+	url = https://github.com/plantmewallet/erc-private-contracts
