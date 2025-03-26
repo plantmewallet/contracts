@@ -4,5 +4,8 @@
 !.gitignore
 !README.md
 !*.sol
+!/**/*.sol
 !*.so
+!/**/*.so
 !*.move
+!/**/*.move
