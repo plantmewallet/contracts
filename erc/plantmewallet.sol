@@ -173,6 +173,7 @@ contract PlantMeWalletV1 {
      * Unable to trade indefinitely, but transfers to the owner’s wallet are allowed.
      */
     function emergencyLock() external onlyAdmin {
+        require(!isTradingLock, "already locked");
         isTradingLock = true;
         emit TradingLocked(isTradingLock);
     }
