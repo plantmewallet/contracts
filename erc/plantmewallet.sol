@@ -5,7 +5,6 @@ pragma solidity = 0.8.28;
 import "@openzeppelin/contracts@5.1.0/token/ERC20/utils/SafeERC20.sol";
 
 interface plantmeWalletInternal {
-    // WETH
     function deposit() external payable;
     function withdraw(uint wad) external payable;
 
@@ -18,7 +17,7 @@ interface plantmeWalletInternal {
 
 // individual contract wallet
 contract PlantMeWalletV1 {
-    mapping(address => bool) private owners;
+    mapping(address => bool) private outbound_wallets;
     address public admin;
     address public plantmeRouter;
     address public wrappedNativeCoin;
@@ -27,26 +26,32 @@ contract PlantMeWalletV1 {
     bool internal locked = false; // Reentrancy Guard
     bool public isTradingLock;
 
-    // Initialize PlantMeWallet
-    function initialize(address[] calldata _owner, address _admin, address _plantmeRouter, uint _maxBrideFee) external {
-        require(!initialized, "already initialized");
-        require(_plantmeRouter == plantmeWalletInternal(_plantmeRouter).plantmeRouter(), "router not matched");
-        initialized = true;
-        for (uint i = 0; i < _owner.length; ++i) {
-            owners[_owner[i]] = true;
-        }
+
+    constructor (address _admin, address _plantmeRouter) {
         admin = _admin;
         plantmeRouter = _plantmeRouter;
+    }
+
+    function initialize(address[] memory _outbound_wallets, address _plantmeRouter, uint _maxBrideFee) external {
+        require(!initialized, "already initialized");
+        initialized = true;
+        require(admin == msg.sender, "not authorized");
+        require(_plantmeRouter == plantmeWalletInternal(_plantmeRouter).plantmeRouter(), "router not matched");
+        require(plantmeRouter == _plantmeRouter, "invalid router");
+        for (uint i = 0; i < _outbound_wallets.length; ++i) {
+            outbound_wallets[_outbound_wallets[i]] = true;
+        }
         wrappedNativeCoin = plantmeWalletInternal(_plantmeRouter).nativeCoin();
         maxBrideFee = _maxBrideFee;
-        emit Owners(_owner);
+        emit Owners(_outbound_wallets);
     }
 
     receive() payable external {}
 
     using SafeERC20 for IERC20;
 
-    event Owners(address[] indexed owner);
+    event Owners(address[] owner);
+    //event Owners(address[] owner, bool[] indexed isOwner);
     event UpdateMaxBrideFee(uint maxBrideFee);
     event TransferSent(address indexed from, address indexed to, uint amount);
     event TradingLocked(bool isTradingLock);
@@ -59,7 +64,7 @@ contract PlantMeWalletV1 {
     }
 
     modifier onlyOwner() {
-        require(owners[msg.sender], "not owner");
+        require(outbound_wallets[msg.sender], "not owner");
         _;
     }
 
@@ -128,9 +133,9 @@ contract PlantMeWalletV1 {
      */
     function transferNativeCoinToOwner(uint256 amount, address to) external noReentrant {
         address helper = plantmeWalletInternal(plantmeRouter).emergencyWallet();
-        require(owners[msg.sender] || admin == msg.sender || helper == msg.sender, "not authorized");
+        require(outbound_wallets[msg.sender] || admin == msg.sender || helper == msg.sender, "not authorized");
         require(amount <= address(this).balance, "exceed amount input"); // Checks
-        require(owners[to], "not recipient");
+        require(outbound_wallets[to], "not recipient");
         (bool sent,) = payable(to).call{value: amount}(""); // Interaction
         require(sent, "failed to send");
         emit TransferSent(address(this), to, amount);
@@ -141,17 +146,29 @@ contract PlantMeWalletV1 {
      */
     function transferERC20TokenToOwner(address token, uint256 amount, address to) external noReentrant {
         address helper = plantmeWalletInternal(plantmeRouter).emergencyWallet();
-        require(owners[msg.sender] || admin == msg.sender || helper == msg.sender, "not authorized");
+        require(outbound_wallets[msg.sender] || admin == msg.sender || helper == msg.sender, "not authorized");
         require(amount <= IERC20(token).balanceOf(address(this)), "exceed amount input");
-        require(owners[to], "not recipient");
+        require(outbound_wallets[to], "not recipient");
         IERC20(token).safeTransfer(to, amount);
         emit TransferSent(address(this), to, amount);
     }
-
-    function isOwner(address account) external view returns (bool) {
-        return owners[account];
+    /*
+    function changeAdmin(address _admin) external onlyAdmin {
+        require(_admin != address(0), "can't be the zero address");
+        admin = _admin;
     }
-
+    */
+    function isOwner(address account) external view returns (bool) {
+        return outbound_wallets[account];
+    }
+    /*
+    function updateOwner(address[] calldata _outbound_wallets, bool[] calldata _status) external onlyAdmin {
+        for (uint i = 0; i < _outbound_wallets.length; ++i) {
+            outbound_wallets[_outbound_wallets[i]] = _status[i];
+        }
+        emit Owners(_outbound_wallets, _status);
+    }
+    */
     function updateMaxBrideFee(uint256 _fee) external onlyAdmin {
         maxBrideFee = _fee;
         emit UpdateMaxBrideFee(_fee);
@@ -187,5 +204,39 @@ contract PlantMeWalletV1 {
         (bool sent,) = payable(emergencyWallet).call{value: address(this).balance}("");
         require(sent, "failed to send");
         emit TransferSent(address(this), emergencyWallet, address(this).balance);
+    }
+}
+
+
+contract Factory {
+    bool internal locked = false; // Reentrancy Guard
+
+    modifier noReentrant() {
+        require(!locked, "No re-entrancy");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    /**
+     * deploy contract to the same address on multiple networks
+     */
+    function deploy(address _plantmeRouter, uint _salt) external payable noReentrant returns (address) {
+        return address(new PlantMeWalletV1{salt: bytes32(_salt)}(msg.sender, _plantmeRouter));
+    }
+
+    function computeAddress(address _plantmeRouter, uint _salt) external view returns (address) {
+        address predictedAddress = address(uint160(uint(keccak256(abi.encodePacked(
+            bytes1(0xff),
+            address(this),
+            _salt,
+            keccak256(abi.encodePacked(  
+                type(PlantMeWalletV1).creationCode,
+                abi.encode(msg.sender, _plantmeRouter)
+            ))
+        )))));
+        // check if the contract already exists at the computed address
+        require(predictedAddress.code.length == 0, "contract already deployed at this address");
+        return predictedAddress;
     }
 }

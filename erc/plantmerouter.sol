@@ -3,25 +3,29 @@ pragma solidity = 0.8.28;
 
 //import the SafeERC20 interface
 import "@openzeppelin/contracts@5.1.0/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts-upgradeable@5.1.0/proxy/utils/Initializable.sol";
 
 
-contract PlantMeRouter is Initializable {
+contract PlantMeRouter {
     address public owner;
     address public plantmeRouter;
     address public nativeCoin;
     address public emergencyWallet;
+    bool internal initialized;
     // Storage slot for the implementation address
     bytes32 private constant _IMPLEMENTATION_SLOT = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
 
-    // Initialize PlantMeRouter
-    function initialize(address _impl, address _owner, address _nativeCoin, address _emergencyWallet) external initializer {
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    function initialize( address _impl, address _nativeCoin, address _emergencyWallet) external onlyOwner {
+        require(!initialized, "already initialized");
+        initialized = true;
         // Store the implementation address in the predefined slot
         _setImplementation(_impl);
-        owner = _owner;
-        plantmeRouter = address(this);
         nativeCoin = _nativeCoin;
         emergencyWallet = _emergencyWallet;
+        plantmeRouter = address(this);
     }
 
     receive() payable external {}
@@ -126,5 +130,39 @@ contract PlantMeRouter is Initializable {
         require(amount <= IERC20(token).balanceOf(address(this)), "exceed amount input");
         IERC20(token).safeTransfer(to, amount);
         emit TransferSent(address(this), to, amount);
+    }
+}
+
+
+contract RouterFactory {
+    bool internal locked = false; // Reentrancy Guard
+
+    modifier noReentrant() {
+        require(!locked, "No re-entrancy");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    /**
+     * deploy contract to the same address on multiple networks
+     */
+    function deploy(uint _salt) external payable noReentrant returns (address) {
+        return address(new PlantMeRouter{salt: bytes32(_salt)}(msg.sender));
+    }
+
+    function computeAddress(uint _salt) external view returns (address) {
+        address predictedAddress = address(uint160(uint(keccak256(abi.encodePacked(
+            bytes1(0xff),
+            address(this),
+            _salt,
+            keccak256(abi.encodePacked(  
+                type(PlantMeRouter).creationCode,
+                abi.encode(msg.sender)
+            ))
+        )))));
+        // check if the contract already exists at the computed address
+        require(predictedAddress.code.length == 0, "contract already deployed at this address");
+        return predictedAddress;
     }
 }
