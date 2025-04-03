@@ -1,11 +1,20 @@
-# exclude everything
+# Ignore everything
 *
-# except the following file
+# But not these files
 !.gitignore
 !README.md
+
+# Allow folders to be traversed
+!*/
+
+# Allow solidity files everywhere
 !*.sol
 !/**/*.sol
+
+# Allow solana files everywhere
 !*.so
 !/**/*.so
+
+# Allow sui contract files everywhere
 !*.move
 !/**/*.move
